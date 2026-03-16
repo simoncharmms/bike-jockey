@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Bike Jockey — Map Tour de France 2025 stage profiles to Spotify playlists for spinning classes">
+  <title>🚴 Bike Jockey — TDF 2025 Spinning Playlists</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚴</text></svg>">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Stage data -->
+  <script src="data/stages.js"></script>
+</head>
+<body>
+
+<!-- ================================================================
+     AUTH SCREEN
+================================================================ -->
+<div id="auth-screen">
+  <div class="auth-bg"></div>
+  <div class="auth-card">
+    <div class="auth-logo">🚴</div>
+    <h1 class="auth-title">Bike Jockey</h1>
+    <p class="auth-subtitle">
+      Turn Tour de France 2025 stage profiles into
+      perfectly paced spinning playlists — powered by your Spotify library.
+    </p>
+
+    <div class="auth-features">
+      <div class="auth-feature">
+        <div class="auth-feature-icon" style="background:rgba(255,107,43,0.15)">🏔️</div>
+        <span>10 iconic TDF 2025 stages — from Bastille Day to the Champs-Élysées</span>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon" style="background:rgba(29,185,84,0.15)">🎵</div>
+        <span>Your saved tracks matched to stage gradients by BPM and energy</span>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon" style="background:rgba(59,130,246,0.15)">💓</div>
+        <span>Heart rate zones, power zones & instructor cues for every segment</span>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon" style="background:rgba(234,179,8,0.15)">📊</div>
+        <span>Elevation profiles, intensity charts & full workout metrics</span>
+      </div>
+    </div>
+
+    <button class="btn btn-spotify" id="btn-auth-spotify" style="width:100%;justify-content:center;font-size:16px;padding:14px 24px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+      </svg>
+      Connect with Spotify
+    </button>
+
+    <button class="btn btn-ghost" id="btn-demo-mode" style="width:100%;justify-content:center;margin-top:10px">
+      🎭 Try Demo Mode (no Spotify needed)
+    </button>
+
+    <p class="auth-note">
+      We only request access to your saved tracks and the ability to create private playlists.
+      No data is stored on any server — everything stays in your browser.
+    </p>
+  </div>
+</div>
+
+<!-- ================================================================
+     MAIN APP
+================================================================ -->
+<div id="main-app">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="logo">
+      <div class="logo-icon">🚴</div>
+      <span class="logo-text">Bike Jockey</span>
+      <span class="logo-tagline">TDF 2025 Edition</span>
+    </div>
+
+    <div class="header-actions">
+      <div class="spotify-status">
+        <div class="spotify-dot" id="spotify-dot"></div>
+        <span id="spotify-label" style="font-size:13px;color:var(--text-secondary)">Not connected</span>
+        <span id="user-label" style="font-size:13px;font-weight:600;display:none"></span>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-clear-cache" title="Clear cached track data">
+        🗑 Clear Cache
+      </button>
+      <button class="btn btn-spotify btn-sm" id="btn-spotify-connect">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+        </svg>
+        Connect Spotify
+      </button>
+    </div>
+  </header>
+
+  <!-- Stage Selector -->
+  <div id="stage-selector">
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">🏁 Select a Stage</h1>
+        <p class="section-subtitle">Choose from 10 iconic TDF 2025 stages — from sprint battles to queen mountain stages</p>
+      </div>
+    </div>
+    <div class="stage-grid" id="stage-grid">
+      <!-- Stage cards rendered by JS -->
+    </div>
+  </div>
+
+  <!-- Stage View -->
+  <div id="stage-view">
+
+    <!-- Stage View Header -->
+    <div class="stage-view-header">
+      <button class="back-btn" id="btn-back">
+        ← Back
+      </button>
+      <div class="stage-view-title">
+        <h2 id="stage-view-title">Stage Name</h2>
+        <div class="stage-meta" id="stage-view-meta">Start → Finish · Distance</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="view-stage-date" style="font-size:13px;color:var(--text-muted)"></span>
+        <span id="view-stage-distance" style="font-size:13px;color:var(--text-secondary)"></span>
+      </div>
+    </div>
+
+    <!-- Stage View Body -->
+    <div class="stage-view-body">
+
+      <!-- Main Content -->
+      <div class="stage-main-content">
+
+        <!-- Elevation Profile Chart -->
+        <div class="chart-container">
+          <div class="chart-title">
+            📈 Elevation Profile
+            <span style="font-size:11px;color:var(--text-muted);margin-left:auto">hover to inspect</span>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="elevation-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Now Playing / Current Segment -->
+        <div>
+          <div class="chart-title" style="margin-bottom:12px">🎵 Current Segment</div>
+          <div id="now-playing"></div>
+        </div>
+
+        <!-- Playlist / Segments -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="chart-title" style="margin-bottom:0">📋 Stage Playlist</div>
+            <button class="btn btn-secondary btn-sm" id="btn-push-playlist">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+              </svg>
+              Save to Spotify
+            </button>
+          </div>
+          <div class="segments-list" id="segments-list">
+            <!-- Segments rendered by JS -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Sidebar -->
+      <aside class="stage-sidebar">
+
+        <!-- Workout Summary -->
+        <div class="sidebar-card">
+          <div class="sidebar-card-title">🏆 Workout Summary</div>
+          <div class="metric-row">
+            <span class="metric-label">⏱ Duration</span>
+            <span class="metric-value text-accent" id="metric-duration">—</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">⛰️ Elevation</span>
+            <span class="metric-value" id="metric-elevation">—</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">♩ Avg BPM</span>
+            <span class="metric-value" id="metric-bpm">—</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">🔥 Est. Calories</span>
+            <span class="metric-value" id="metric-calories">—</span>
+          </div>
+        </div>
+
+        <!-- Intensity Distribution -->
+        <div class="sidebar-card">
+          <div class="sidebar-card-title">📊 Intensity Distribution</div>
+          <div class="donut-container">
+            <canvas id="donut-chart" width="150" height="150"></canvas>
+            <div class="donut-center">
+              <span class="donut-center-value">Zones</span>
+              <span class="donut-center-label">distribution</span>
+            </div>
+          </div>
+          <div class="zone-legend" id="zone-legend">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Key Climbs -->
+        <div class="sidebar-card" id="climbs-card">
+          <div class="sidebar-card-title">🏔️ Key Climbs</div>
+          <div id="climbs-list">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Training Tips -->
+        <div class="sidebar-card">
+          <div class="sidebar-card-title">💡 Spinning Tips</div>
+          <div style="font-size:13px;color:var(--text-secondary);line-height:1.6">
+            <p style="margin-bottom:8px">
+              🔵 <strong>Z1–Z2:</strong> Low resistance, high cadence (90–110 rpm). Seated spin.
+            </p>
+            <p style="margin-bottom:8px">
+              🟡 <strong>Z3:</strong> Moderate resistance, cadence 80–90 rpm. Feel the burn.
+            </p>
+            <p style="margin-bottom:8px">
+              🟠 <strong>Z4:</strong> Heavy resistance, cadence 70–80 rpm. Standing climbs.
+            </p>
+            <p>
+              🔴 <strong>Z5:</strong> Max resistance + sprints. Explosive effort. Go!
+            </p>
+          </div>
+        </div>
+
+      </aside>
+    </div>
+  </div>
+
+</div><!-- /main-app -->
+
+<!-- Loading Overlay -->
+<div class="loading-overlay hidden" id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Loading…</div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- App Script -->
+<script src="app.js"></script>
+
+<!-- Post-render: populate key climbs when stage is selected -->
+<script>
+  // Hook into selectStage to also populate the climbs sidebar
+  const _origSelectStage = selectStage;
+  window.selectStage = async function(stageId) {
+    await _origSelectStage(stageId);
+    const stage = state.stages.find(s => s.id === stageId);
+    if (!stage) return;
+
+    const climbsList = document.getElementById('climbs-list');
+    const climbsCard = document.getElementById('climbs-card');
+
+    if (!stage.keyClimbs || stage.keyClimbs.length === 0) {
+      if (climbsCard) climbsCard.style.display = 'none';
+      return;
+    }
+
+    if (climbsCard) climbsCard.style.display = '';
+    if (climbsList) {
+      climbsList.innerHTML = stage.keyClimbs.map(c => {
+        const gradColor = c.gradient > 8 ? '#ef4444' : c.gradient > 6 ? '#f97316' : c.gradient > 4 ? '#eab308' : '#22c55e';
+        return `
+          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;font-weight:600;margin-bottom:3px">${escapeHtml(c.name)}</div>
+            <div style="display:flex;gap:12px;font-size:12px;color:var(--text-secondary)">
+              <span>📏 ${c.length}km</span>
+              <span style="color:${gradColor}">↗ ${c.gradient}%</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+      // Remove border from last item
+      const items = climbsList.querySelectorAll('div');
+      if (items.length > 0) items[items.length - 1].style.borderBottom = 'none';
+    }
+  };
+</script>
+
+</body>
+</html>
