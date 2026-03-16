@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bike Jockey — Connecting Spotify…</title>
+  <script>
+    // Redirect to main app with the OAuth params intact
+    const params = window.location.search;
+    window.location.replace('/' + 'bike-jockey/' + (params || ''));
+  </script>
+</head>
+<body>
+  <p>Connecting to Spotify, please wait…</p>
+</body>
+</html>
