@@ -31,6 +31,18 @@ Bike Jockey maps the elevation profiles of 10 iconic TDF 2025 stages to BPM curv
 
 ---
 
+## Playlist Rules
+
+Every generated session follows these rules:
+
+| Rule | Description |
+|------|-------------|
+| 🎸 First & last song | Always instrumental (low energy + low danceability) |
+| 💤 Breaks | Sessions 1–3: 3 breaks · Sessions 4–6: 4 breaks · Sessions 7–10: 1 break. Each break is an instrumental track placed before an intensity increase. |
+| 🤘 Second-to-last song | Always from **Die Ärzte** (or a placeholder if not in your library) |
+
+---
+
 ## Stages Included
 
 | # | Stage | Type | Distance | Elev. |

@@ -109,6 +109,14 @@
         <p class="section-subtitle">Choose from 10 iconic TDF 2025 stages — from sprint battles to queen mountain stages</p>
       </div>
     </div>
+    <div class="rules-card">
+      <div class="rules-title">📋 Playlist Generation Rules</div>
+      <ul class="rules-list">
+        <li>🎸 <strong>First &amp; last song</strong> are always instrumental (low energy, low danceability)</li>
+        <li>💤 <strong>Breaks</strong>: Sessions 1–3 get 3 breaks · Sessions 4–6 get 4 breaks · Sessions 7–10 get 1 break. Each break is an instrumental track placed before an intensity spike.</li>
+        <li>🤘 <strong>Second-to-last song</strong> is always from <em>Die Ärzte</em></li>
+      </ul>
+    </div>
     <div class="stage-grid" id="stage-grid">
       <!-- Stage cards rendered by JS -->
     </div>
@@ -165,6 +173,7 @@
               </svg>
               Save to Spotify
             </button>
+            <button class="btn btn-secondary btn-sm" id="btn-export-pdf" onclick="exportToPDF()">🖨️ Print PDF</button>
           </div>
           <div class="segments-list" id="segments-list">
             <!-- Segments rendered by JS -->

@@ -224,7 +224,179 @@ function generateSegments(stage, tracks, audioFeatures) {
     });
   }
 
-  return segments;
+  return applyPlaylistRules(segments, stage.id, tracks, audioFeatures);
+}
+
+// ---- Playlist Rules Engine ----
+function isInstrumental(feat) {
+  return feat && feat.energy < 0.4 && feat.danceability < 0.5;
+}
+
+function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
+  // Prefer tracks matching the instrumental criteria
+  const candidates = tracks.filter(t =>
+    audioFeatures[t.id] && isInstrumental(audioFeatures[t.id]) && !excludeIds.includes(t.id)
+  );
+  if (candidates.length > 0) {
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+  // Fallback: pick the lowest-energy track not yet used
+  const sorted = tracks
+    .filter(t => audioFeatures[t.id] && !excludeIds.includes(t.id))
+    .sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+  return sorted[0] || tracks[0] || null;
+}
+
+function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) {
+  const feat = track ? audioFeatures[track.id] : null;
+  return {
+    index: 0,
+    km: 0, kmEnd: 0, elevation: 0, gradientPct: 0,
+    targetBpm: feat ? Math.round(feat.tempo) : 70,
+    zone: 1,
+    duration: durationSec,
+    trackId: track ? track.id : null,
+    trackName: track ? track.name : 'Instrumental',
+    trackArtist: track ? track.artist : '—',
+    trackAlbumArt: track ? track.albumArt : null,
+    trackUri: track ? track.uri : null,
+    actualBpm: feat ? Math.round(feat.tempo) : 70,
+    energy: feat ? feat.energy : 0.2,
+    rpe: 2,
+    descriptor: descriptor || '💤 Recovery Break',
+    hrZone: hrZone(1),
+    powerZone: powerZone(1),
+    isBreak: true
+  };
+}
+
+function findDieAerzteTrack(tracks) {
+  return tracks.find(t => {
+    const a = t.artist.toLowerCase();
+    return a.includes('die ärzte') || a.includes('die aerzte') || a.includes('ärzte');
+  }) || null;
+}
+
+function applyPlaylistRules(segments, stageId, tracks, audioFeatures) {
+  if (!segments || segments.length === 0) return segments;
+
+  const usedIds = segments.map(s => s.trackId).filter(Boolean);
+  const avgDuration = segments.reduce((sum, s) => sum + s.duration, 0) / segments.length;
+
+  // --- Rule 1: Instrumental opener & closer ---
+  const openerTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+  if (openerTrack) usedIds.push(openerTrack.id);
+  const closerTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+  if (closerTrack) usedIds.push(closerTrack.id);
+
+  const opener = makeInstrumentalSegment(openerTrack, audioFeatures, avgDuration, '🎸 Warm-Up (Instrumental)');
+  const closer = makeInstrumentalSegment(closerTrack, audioFeatures, avgDuration, '🎸 Cool-Down (Instrumental)');
+
+  // --- Rule 2: Insert breaks ---
+  let breakCount;
+  if (stageId <= 3) breakCount = 3;
+  else if (stageId <= 6) breakCount = 4;
+  else breakCount = 1;
+
+  // Find zone-change points (where zone increases by ≥1 vs previous)
+  const zoneChangeIndices = [];
+  for (let i = 1; i < segments.length; i++) {
+    if (segments[i].zone - segments[i - 1].zone >= 1) {
+      zoneChangeIndices.push(i);
+    }
+  }
+
+  // Decide break insertion positions
+  let breakPositions = [];
+  if (zoneChangeIndices.length >= breakCount) {
+    // Pick the top zone-change points, spread out
+    const step = Math.max(1, Math.floor(zoneChangeIndices.length / breakCount));
+    for (let i = 0; i < breakCount; i++) {
+      const idx = Math.min(i * step, zoneChangeIndices.length - 1);
+      breakPositions.push(zoneChangeIndices[idx]);
+    }
+  } else {
+    // Not enough zone-change points — distribute evenly
+    breakPositions = zoneChangeIndices.slice(0, breakCount);
+    const remaining = breakCount - breakPositions.length;
+    if (remaining > 0) {
+      const step = Math.floor(segments.length / (remaining + 1));
+      for (let i = 1; i <= remaining; i++) {
+        const pos = i * step;
+        if (!breakPositions.includes(pos) && pos < segments.length) {
+          breakPositions.push(pos);
+        }
+      }
+    }
+  }
+  breakPositions.sort((a, b) => a - b);
+  // Deduplicate
+  breakPositions = [...new Set(breakPositions)];
+
+  // Build the middle section with breaks inserted
+  const middle = [];
+  let breakIdx = 0;
+  for (let i = 0; i < segments.length; i++) {
+    if (breakIdx < breakPositions.length && i === breakPositions[breakIdx]) {
+      const breakTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+      if (breakTrack) usedIds.push(breakTrack.id);
+      middle.push(makeInstrumentalSegment(breakTrack, audioFeatures, avgDuration * 0.6, '💤 Recovery Break'));
+      breakIdx++;
+    }
+    middle.push(segments[i]);
+  }
+
+  // --- Rule 3: Second-to-last = Die Ärzte ---
+  const aerzteTrack = findDieAerzteTrack(tracks);
+  let aerzteSeg;
+  if (aerzteTrack) {
+    const feat = audioFeatures[aerzteTrack.id];
+    aerzteSeg = {
+      index: 0,
+      km: 0, kmEnd: 0, elevation: 0, gradientPct: 0,
+      targetBpm: feat ? Math.round(feat.tempo) : 130,
+      zone: feat ? bpmToZone(feat.tempo) : 3,
+      duration: avgDuration,
+      trackId: aerzteTrack.id,
+      trackName: aerzteTrack.name,
+      trackArtist: aerzteTrack.artist,
+      trackAlbumArt: aerzteTrack.albumArt,
+      trackUri: aerzteTrack.uri,
+      actualBpm: feat ? Math.round(feat.tempo) : 130,
+      energy: feat ? feat.energy : 0.7,
+      rpe: 6,
+      descriptor: '🤘 Die Ärzte Finale',
+      hrZone: hrZone(feat ? bpmToZone(feat.tempo) : 3),
+      powerZone: powerZone(feat ? bpmToZone(feat.tempo) : 3),
+      isDieAerzte: true
+    };
+  } else {
+    aerzteSeg = {
+      index: 0,
+      km: 0, kmEnd: 0, elevation: 0, gradientPct: 0,
+      targetBpm: 130, zone: 3, duration: avgDuration,
+      trackId: 'die_aerzte_placeholder',
+      trackName: 'SFT (Schrei nach Liebe)',
+      trackArtist: 'Die Ärzte',
+      trackAlbumArt: null,
+      trackUri: null,
+      actualBpm: 130,
+      energy: 0.7, rpe: 6,
+      descriptor: '⚠️ Add \'Die Ärzte\' to your Spotify library!',
+      hrZone: hrZone(3), powerZone: powerZone(3),
+      isPlaceholder: true,
+      isDieAerzte: true
+    };
+  }
+
+  // --- Assemble final order ---
+  // [opener, ...middle_with_breaks, die_aerzte, closer]
+  const final = [opener, ...middle, aerzteSeg, closer];
+
+  // Re-index
+  final.forEach((seg, i) => { seg.index = i; });
+
+  return final;
 }
 
 function interpolateElevation(profile, km) {
@@ -999,6 +1171,64 @@ async function pushPlaylistToSpotify() {
     hideLoading();
     toast('Failed to create playlist: ' + err.message, 'error');
   }
+}
+
+// ---- PDF Export ----
+function exportToPDF() {
+  const stage = state.activeStage;
+  const segments = state.generatedPlaylists[stage?.id];
+  if (!stage || !segments) {
+    toast('No playlist generated yet', 'error');
+    return;
+  }
+
+  const today = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const rows = segments.map((seg, i) => {
+    const isBreak = seg.isBreak;
+    const isAerzte = seg.isDieAerzte;
+    const rowStyle = isBreak ? 'background:#f5f5f5;' : isAerzte ? 'border-left:3px solid #C2185B;' : '';
+    const descCol = isBreak ? '💤 Break' : escapeHtml(seg.descriptor);
+    return `<tr style="${rowStyle}">
+      <td style="padding:6px 8px;border:1px solid #ddd;text-align:center">${i + 1}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd">${escapeHtml(seg.trackName)}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd">${escapeHtml(seg.trackArtist)}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;text-align:center">${seg.actualBpm}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;text-align:center">Z${seg.zone}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;text-align:center">${formatDuration(seg.duration)}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd">${descCol}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;text-align:center">${isBreak ? '✓' : ''}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Bike Jockey — Stage ${stage.number}</title>
+<style>
+  @media print { body { font-size: 11pt; } table { width: 100%; border-collapse: collapse; } }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: #222; max-width: 900px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 20pt; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 11pt; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th { background: #333; color: #fff; padding: 8px; font-size: 10pt; text-align: left; }
+  td { font-size: 10pt; }
+  .footer { margin-top: 24px; font-size: 9pt; color: #999; text-align: center; border-top: 1px solid #ddd; padding-top: 12px; }
+</style>
+</head><body>
+<h1>🚴 Bike Jockey — Stage ${stage.number}: ${escapeHtml(stage.name)}</h1>
+<div class="meta">${today} · ${escapeHtml(stage.start)} → ${escapeHtml(stage.finish)} · ${stage.distance}km · +${stage.elevationGain.toLocaleString()}m</div>
+<table>
+  <thead><tr>
+    <th>#</th><th>Track</th><th>Artist</th><th>BPM</th><th>Zone</th><th>Duration</th><th>Descriptor</th><th>Break?</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer">Generated by Bike Jockey · simoncharmms.github.io/bike-jockey</div>
+<script>window.onload=function(){window.print();}<\/script>
+</body></html>`;
+
+  const printWin = window.open('', '_blank');
+  printWin.document.write(html);
+  printWin.document.close();
 }
 
 function clearCache() {

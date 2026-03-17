@@ -1045,6 +1045,35 @@ body {
   .auth-title { font-size: 26px; }
 }
 
+/* ---- Rules Card ---- */
+.rules-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin: 0 0 24px 0;
+  max-width: 800px;
+}
+.rules-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.rules-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rules-list li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 /* ---- Utility ---- */
 .hidden { display: none !important; }
 .text-accent { color: var(--accent); }
