@@ -62,6 +62,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
+  padding-bottom: 80px;
 }
 
 /* ---- Scrollbar ---- */
@@ -1044,6 +1045,45 @@ body {
   .auth-card { padding: 32px 24px; }
   .auth-title { font-size: 26px; }
 }
+
+/* ---- Spotify Player Bar ---- */
+.player-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 72px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  z-index: 200;
+  backdrop-filter: blur(12px);
+}
+.player-bar.hidden { display: none; }
+.player-left { display: flex; align-items: center; gap: 12px; width: 240px; min-width: 0; }
+.player-album-art { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; }
+.player-track-info { min-width: 0; }
+.player-track-name { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-track-artist { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-center { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.player-controls { display: flex; align-items: center; gap: 16px; }
+.player-btn { background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer; padding: 4px; transition: color 0.15s; }
+.player-btn:hover { color: var(--text-primary); }
+.player-btn-play { font-size: 22px; color: var(--text-primary); }
+.player-progress { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 480px; }
+.player-time { font-size: 11px; color: var(--text-muted); min-width: 32px; }
+.player-progress-bar { flex: 1; height: 4px; background: var(--bg-elevated); border-radius: 2px; cursor: pointer; position: relative; }
+.player-progress-bar:hover { height: 6px; }
+.player-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s linear; }
+.player-right { width: 160px; display: flex; justify-content: flex-end; }
+.device-picker { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 8px; min-width: 220px; }
+.device-picker.hidden { display: none; }
+.device-picker-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.device-item { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.device-item:hover { background: var(--bg-elevated); }
+.device-name { color: var(--text-primary); flex: 1; }
+.device-active { font-size: 10px; color: var(--accent); font-weight: 700; }
 
 /* ---- Rules Card ---- */
 .rules-card {

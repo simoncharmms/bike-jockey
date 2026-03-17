@@ -15,10 +15,14 @@ const SCOPES = [
   'user-library-read',
   'playlist-modify-private',
   'playlist-modify-public',
-  'user-read-private'
+  'user-read-private',
+  'user-read-playback-state',
+  'user-modify-playback-state',
+  'user-read-currently-playing'
 ].join(' ');
 
 const CACHE_KEY_TRACKS = 'bj_saved_tracks';
+const CACHE_KEY_DEVICES = 'bj_devices';
 const CACHE_KEY_FEATURES = 'bj_audio_features';
 const CACHE_KEY_TOKEN = 'bj_access_token';
 const CACHE_KEY_EXPIRY = 'bj_token_expiry';
@@ -34,7 +38,12 @@ const state = {
   activeStage: null,
   activeSegmentIndex: 0,
   generatedPlaylists: {}, // { stageId: [...segments] }
-  spotifyConnected: false
+  spotifyConnected: false,
+  playbackState: null,
+  availableDevices: [],
+  activeDeviceId: null,
+  playbackPolling: null,
+  isBikeJockeyPlayback: false
 };
 
 // ---- Utils ----
@@ -574,6 +583,9 @@ async function spotifyFetch(endpoint, options = {}) {
     const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
     throw new Error(err.error?.message || 'API error');
   }
+
+  // Handle 204 No Content (e.g. /me/player when nothing playing, or PUT responses)
+  if (response.status === 204) return null;
 
   return response.json();
 }
@@ -1173,6 +1185,236 @@ async function pushPlaylistToSpotify() {
   }
 }
 
+// ---- Spotify Playback API ----
+async function fetchAvailableDevices() {
+  const data = await spotifyFetch('/me/player/devices');
+  state.availableDevices = (data.devices || []).map(d => ({
+    id: d.id,
+    name: d.name,
+    type: d.type,
+    is_active: d.is_active
+  }));
+  return state.availableDevices;
+}
+
+async function transferPlayback(deviceId) {
+  await spotifyFetch('/me/player', {
+    method: 'PUT',
+    body: JSON.stringify({ device_ids: [deviceId], play: false })
+  });
+}
+
+async function playPlaylist(trackUris, deviceId) {
+  const body = { uris: trackUris };
+  const endpoint = deviceId
+    ? `/me/player/play?device_id=${deviceId}`
+    : '/me/player/play';
+  await spotifyFetch(endpoint, {
+    method: 'PUT',
+    body: JSON.stringify(body)
+  });
+}
+
+async function pausePlayback() {
+  await spotifyFetch('/me/player/pause', { method: 'PUT' });
+}
+
+async function resumePlayback() {
+  await spotifyFetch('/me/player/play', { method: 'PUT' });
+}
+
+async function skipToNext() {
+  await spotifyFetch('/me/player/next', { method: 'POST' });
+}
+
+async function skipToPrevious() {
+  await spotifyFetch('/me/player/previous', { method: 'POST' });
+}
+
+async function seekToPosition(positionMs) {
+  await spotifyFetch(`/me/player/seek?position_ms=${positionMs}`, { method: 'PUT' });
+}
+
+async function fetchCurrentPlayback() {
+  try {
+    const data = await spotifyFetch('/me/player');
+    if (!data || !data.item) {
+      state.playbackState = null;
+      return null;
+    }
+    state.playbackState = {
+      isPlaying: data.is_playing,
+      trackId: data.item.id,
+      trackName: data.item.name,
+      trackArtist: data.item.artists?.map(a => a.name).join(', ') || '—',
+      trackAlbumArt: data.item.album?.images?.[1]?.url || data.item.album?.images?.[0]?.url || null,
+      progressMs: data.progress_ms || 0,
+      durationMs: data.item.duration_ms || 0,
+      deviceName: data.device?.name || '—',
+      deviceType: data.device?.type || 'Unknown'
+    };
+    return state.playbackState;
+  } catch (err) {
+    // 204 No Content or other non-JSON → nothing playing
+    state.playbackState = null;
+    return null;
+  }
+}
+
+function startPlaybackPolling() {
+  stopPlaybackPolling();
+  state.playbackPolling = setInterval(async () => {
+    await fetchCurrentPlayback();
+    renderPlayerWidget();
+    syncActiveSegment();
+  }, 2500);
+}
+
+function stopPlaybackPolling() {
+  if (state.playbackPolling) {
+    clearInterval(state.playbackPolling);
+    state.playbackPolling = null;
+  }
+}
+
+function syncActiveSegment() {
+  if (!state.isBikeJockeyPlayback || !state.playbackState) return;
+  const segments = state.generatedPlaylists[state.activeStage?.id];
+  if (!segments) return;
+  const currentTrackId = state.playbackState.trackId;
+  const idx = segments.findIndex(s => s.trackId === currentTrackId);
+  if (idx >= 0 && idx !== state.activeSegmentIndex) {
+    selectSegment(idx);
+  }
+}
+
+// ---- Player Widget ----
+function renderPlayerWidget() {
+  const bar = document.getElementById('player-bar');
+  if (!bar) return;
+  const pb = state.playbackState;
+  if (!pb) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+
+  const nameEl = document.getElementById('player-track-name');
+  const artistEl = document.getElementById('player-track-artist');
+  const artEl = document.getElementById('player-album-art');
+  const btnPP = document.getElementById('btn-play-pause');
+  const progressFill = document.getElementById('player-progress-fill');
+  const progressTime = document.getElementById('player-progress-time');
+  const durationTime = document.getElementById('player-duration-time');
+  const deviceEl = document.getElementById('player-device-name');
+
+  if (nameEl) nameEl.textContent = pb.trackName;
+  if (artistEl) artistEl.textContent = pb.trackArtist;
+  if (artEl) {
+    if (pb.trackAlbumArt) {
+      artEl.src = pb.trackAlbumArt;
+      artEl.style.display = '';
+    } else {
+      artEl.style.display = 'none';
+    }
+  }
+  if (btnPP) btnPP.textContent = pb.isPlaying ? '⏸' : '▶';
+  if (progressFill && pb.durationMs > 0) {
+    const pct = Math.min(100, (pb.progressMs / pb.durationMs) * 100);
+    progressFill.style.width = pct + '%';
+  }
+  if (progressTime) progressTime.textContent = formatDuration(pb.progressMs / 1000);
+  if (durationTime) durationTime.textContent = formatDuration(pb.durationMs / 1000);
+  if (deviceEl) deviceEl.textContent = `${pb.deviceName} (${pb.deviceType})`;
+}
+
+function getActivePlaylistUris() {
+  const segments = state.generatedPlaylists[state.activeStage?.id] || [];
+  return segments.filter(s => s.trackUri && !s.isPlaceholder).map(s => s.trackUri);
+}
+
+async function handlePlayStage() {
+  const segments = state.generatedPlaylists[state.activeStage?.id];
+  if (!segments) { toast('Generate a playlist first', 'error'); return; }
+  const uris = getActivePlaylistUris();
+  if (uris.length === 0) { toast('No tracks to play — connect Spotify', 'error'); return; }
+
+  try {
+    await fetchAvailableDevices();
+  } catch (err) {
+    toast('Could not fetch devices: ' + err.message, 'error');
+    return;
+  }
+  const devices = state.availableDevices;
+
+  if (devices.length === 0) {
+    toast('No active Spotify devices found. Open Spotify on any device first.', 'error');
+    return;
+  }
+
+  if (devices.length === 1) {
+    await playOnDevice(devices[0].id, uris);
+  } else {
+    renderDevicePicker(devices);
+    const picker = document.getElementById('device-picker');
+    if (picker) picker.classList.toggle('hidden');
+  }
+}
+
+async function playOnDevice(deviceId, uris) {
+  state.activeDeviceId = deviceId;
+  state.isBikeJockeyPlayback = true;
+  try {
+    await playPlaylist(uris, deviceId);
+    startPlaybackPolling();
+    toast('▶ Playing on Spotify', 'success');
+    const picker = document.getElementById('device-picker');
+    if (picker) picker.classList.add('hidden');
+  } catch (err) {
+    toast('Playback failed: ' + err.message, 'error');
+    state.isBikeJockeyPlayback = false;
+  }
+}
+
+function renderDevicePicker(devices) {
+  const list = document.getElementById('device-list');
+  if (!list) return;
+  list.innerHTML = devices.map(d => {
+    const icon = d.type === 'Smartphone' ? '📱' : d.type === 'Computer' ? '💻' : '🔊';
+    return `
+      <div class="device-item" onclick="playOnDevice('${d.id}', getActivePlaylistUris())">
+        <span class="device-icon">${icon}</span>
+        <span class="device-name">${escapeHtml(d.name)}</span>
+        ${d.is_active ? '<span class="device-active">active</span>' : ''}
+      </div>`;
+  }).join('');
+}
+
+async function togglePlayPause() {
+  if (!state.playbackState) return;
+  try {
+    if (state.playbackState.isPlaying) {
+      await pausePlayback();
+      state.playbackState.isPlaying = false;
+    } else {
+      await resumePlayback();
+      state.playbackState.isPlaying = true;
+    }
+    renderPlayerWidget();
+  } catch (err) {
+    toast('Playback control failed: ' + err.message, 'error');
+  }
+}
+
+function handleProgressClick(event) {
+  if (!state.playbackState) return;
+  const bar = event.currentTarget;
+  const rect = bar.getBoundingClientRect();
+  const pct = (event.clientX - rect.left) / rect.width;
+  const posMs = Math.floor(pct * state.playbackState.durationMs);
+  seekToPosition(posMs);
+}
+
 // ---- PDF Export ----
 function exportToPDF() {
   const stage = state.activeStage;
@@ -1242,6 +1484,8 @@ function clearCache() {
 }
 
 function showAuthScreen() {
+  stopPlaybackPolling();
+  state.isBikeJockeyPlayback = false;
   document.getElementById('auth-screen').style.display = '';
   document.getElementById('main-app').classList.remove('visible');
 }
@@ -1378,6 +1622,7 @@ async function init() {
       showMainApp();
       renderStageGrid();
       updateSpotifyStatus();
+      startPlaybackPolling();
       hideLoading();
       toast(`Welcome back! ${state.savedTracks.length} tracks loaded.`, 'success');
     } catch (err) {
