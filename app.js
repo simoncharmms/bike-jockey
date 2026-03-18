@@ -25,7 +25,7 @@ const CACHE_KEY_TRACKS = 'bj_saved_tracks';
 const CACHE_KEY_DEVICES = 'bj_devices';
 const CACHE_KEY_FEATURES = 'bj_audio_features';
 const CACHE_KEY_FEATURES_VERSION = 'bj_features_version';
-const FEATURES_CACHE_VERSION = '3';
+const FEATURES_CACHE_VERSION = '4';
 const CACHE_KEY_TOKEN = 'bj_access_token';
 const CACHE_KEY_EXPIRY = 'bj_token_expiry';
 const CACHE_KEY_USER = 'bj_user_profile';
@@ -243,44 +243,66 @@ function generateSegments(stage, tracks, audioFeatures, globalUsedIds = []) {
 // ---- Playlist Rules Engine ----
 function isInstrumental(feat) {
   if (!feat) return false;
-  // Hard disqualifier: high speechiness = rap/spoken word/vocals → never a recovery track
-  // Kontra K "Energie" scores ~0.35+ here; pure instrumentals score < 0.1
+  // Hard disqualifier 1: rap/spoken word — speechiness > 0.15 means significant vocals/speech
   if ((feat.speechiness || 0) > 0.15) return false;
-  // Primary: Spotify's own instrumentalness score
-  if (feat.instrumentalness >= 0.5) return true;
-  // Secondary: acoustic + low energy + not speech-heavy (classical, ambient, acoustic covers)
+  // Hard disqualifier 2: high danceability + high energy = dance/pop vocal track
+  if (feat.danceability > 0.7 && feat.energy > 0.6) return false;
+  // Primary: Spotify's own instrumentalness score (>= 0.5 = likely instrumental)
+  if ((feat.instrumentalness || 0) >= 0.5) return true;
+  // Secondary: acoustic + calm (classical, ambient, acoustic covers)
   if ((feat.acousticness || 0) >= 0.6 && feat.energy < 0.5) return true;
-  // Tertiary heuristic: clearly quiet/calm (string quartet covers etc.)
-  return feat.energy < 0.3 && feat.danceability < 0.35 && feat.loudness < -10;
+  // Tertiary: very quiet + low danceability (film scores, lo-fi, ambient)
+  return feat.energy < 0.3 && feat.danceability < 0.35 && (feat.loudness || 0) < -10;
 }
 
 function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
-  // Prefer tracks matching the instrumental criteria (not in excludeIds)
-  const candidates = tracks.filter(t =>
-    audioFeatures[t.id] && isInstrumental(audioFeatures[t.id]) && !excludeIds.includes(t.id)
+  const withFeatures = tracks.filter(t => audioFeatures[t.id]);
+
+  // Tier 1: true instrumentals not yet used
+  const tier1 = withFeatures.filter(t =>
+    isInstrumental(audioFeatures[t.id]) && !excludeIds.includes(t.id)
   );
-  if (candidates.length > 0) {
-    return candidates[Math.floor(Math.random() * candidates.length)];
+  if (tier1.length > 0) return tier1[Math.floor(Math.random() * tier1.length)];
+
+  // Tier 2: true instrumentals already used elsewhere (allow reuse rather than using a vocal track)
+  const tier2 = withFeatures.filter(t => isInstrumental(audioFeatures[t.id]));
+  if (tier2.length > 0) return tier2[Math.floor(Math.random() * tier2.length)];
+
+  // Tier 3: no true instrumentals in library at all — best approximation: low speechiness, low energy, not used
+  const tier3 = withFeatures.filter(t =>
+    (audioFeatures[t.id].speechiness || 0) <= 0.1 &&
+    audioFeatures[t.id].energy < 0.5 &&
+    !excludeIds.includes(t.id)
+  );
+  if (tier3.length > 0) {
+    // Pick randomly from the bottom-energy half to avoid always picking the same track
+    tier3.sort((a, b) => (audioFeatures[a.id].energy || 1) - (audioFeatures[b.id].energy || 1));
+    const half = Math.max(1, Math.ceil(tier3.length / 2));
+    return tier3[Math.floor(Math.random() * half)];
   }
 
-  // No true instrumentals available — fall back gracefully
-  const available = tracks.filter(t => audioFeatures[t.id] && !excludeIds.includes(t.id));
-  const pool = available.length > 0 ? available : tracks.filter(t => audioFeatures[t.id]);
-  if (pool.length === 0) return tracks[0] || null;
-
-  // Among the pool, prefer partial instrumentals (instrumentalness >= 0.3) — pick randomly
-  const partial = pool.filter(t => (audioFeatures[t.id].instrumentalness || 0) >= 0.3);
-  if (partial.length > 0) {
-    return partial[Math.floor(Math.random() * partial.length)];
+  // Tier 4: low speechiness, low energy, reuse allowed
+  const tier4 = withFeatures.filter(t =>
+    (audioFeatures[t.id].speechiness || 0) <= 0.1 &&
+    audioFeatures[t.id].energy < 0.5
+  );
+  if (tier4.length > 0) {
+    tier4.sort((a, b) => (audioFeatures[a.id].energy || 1) - (audioFeatures[b.id].energy || 1));
+    const half = Math.max(1, Math.ceil(tier4.length / 2));
+    return tier4[Math.floor(Math.random() * half)];
   }
 
-  // Last resort: exclude high-speechiness tracks (rap, spoken word), then pick from lowest-energy tercile
-  const nonSpeech = pool.filter(t => (audioFeatures[t.id].speechiness || 0) <= 0.15);
-  const lastPool = nonSpeech.length > 0 ? nonSpeech : pool;
-  lastPool.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-  const tercileSize = Math.max(1, Math.ceil(lastPool.length / 3));
-  const lowEnergyPool = lastPool.slice(0, tercileSize);
-  return lowEnergyPool[Math.floor(Math.random() * lowEnergyPool.length)];
+  // Absolute last resort: anything not used, excluding obvious rap/high-energy
+  const tier5 = withFeatures.filter(t =>
+    (audioFeatures[t.id].speechiness || 0) <= 0.2 && !excludeIds.includes(t.id)
+  );
+  if (tier5.length > 0) return tier5[Math.floor(Math.random() * tier5.length)];
+
+  // Pool is fully exhausted — pick anything not used
+  const notUsed = withFeatures.filter(t => !excludeIds.includes(t.id));
+  return notUsed.length > 0
+    ? notUsed[Math.floor(Math.random() * notUsed.length)]
+    : withFeatures[Math.floor(Math.random() * withFeatures.length)] || null;
 }
 
 function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) {
@@ -435,8 +457,20 @@ function applyPlaylistRules(segments, stageId, tracks, audioFeatures, globalUsed
   // [opener, ...middle_with_breaks, die_aerzte, closer]
   const final = [opener, ...middle, aerzteSeg, closer];
 
-  // Re-index
-  final.forEach((seg, i) => { seg.index = i; });
+  // Re-index and assign km positions to injected segments (breaks, opener, closer)
+  // so the elevation chart marker shows a meaningful position instead of always km=0
+  final.forEach((seg, i) => {
+    seg.index = i;
+    if (seg.km === 0 && seg.kmEnd === 0) {
+      // Find the nearest real segment (non-injected) to borrow its km position
+      const nearestReal = final.slice(i).find(s => s.km > 0 || s.kmEnd > 0)
+        || final.slice(0, i).reverse().find(s => s.km > 0 || s.kmEnd > 0);
+      if (nearestReal) {
+        seg.km = nearestReal.km;
+        seg.kmEnd = nearestReal.kmEnd;
+      }
+    }
+  });
 
   return final;
 }
@@ -460,15 +494,20 @@ function findBestTrack(targetBpm, tracks, audioFeatures, usedIds) {
   const tracksWithFeatures = tracks.filter(t => audioFeatures[t.id]);
   if (tracksWithFeatures.length === 0) return tracks[Math.floor(Math.random() * tracks.length)];
 
-  // Split into fresh (not globally used) and already-used pools
+  // Fresh pool: not globally used across any playlist
   const freshPool = tracksWithFeatures.filter(t => !usedIds.includes(t.id));
-  const pool = freshPool.length > 0 ? freshPool : tracksWithFeatures; // graceful fallback
+  // Fallback: allow reuse, but still prefer non-speechy tracks over rap/spoken word
+  const fallbackPool = tracksWithFeatures.filter(t =>
+    (audioFeatures[t.id].speechiness || 0) <= 0.33
+  );
+  const pool = freshPool.length > 0 ? freshPool
+    : fallbackPool.length > 0 ? fallbackPool
+    : tracksWithFeatures;
 
-  // Score each track: BPM proximity
+  // Score each track: BPM proximity (also check half/double time)
   const scored = pool.map(t => {
     const feat = audioFeatures[t.id];
     const bpm = feat.tempo;
-    // Consider both original tempo and half/double time
     const bpmDiffs = [
       Math.abs(bpm - targetBpm),
       Math.abs(bpm * 2 - targetBpm),
@@ -684,6 +723,8 @@ async function fetchAudioFeatures(trackIds) {
   if (cachedVersion !== FEATURES_CACHE_VERSION) {
     localStorage.removeItem(CACHE_KEY_FEATURES);
     localStorage.setItem(CACHE_KEY_FEATURES_VERSION, FEATURES_CACHE_VERSION);
+    // Also clear generated playlists so they're rebuilt with fresh dedup logic
+    state.generatedPlaylists = {};
   }
 
   // Check existing cache
@@ -1065,6 +1106,14 @@ function renderSegmentsList(segments) {
     return;
   }
 
+  // Pre-compute cumulative start times
+  let cumSec = 0;
+  const cumTimes = segments.map(seg => {
+    const start = cumSec;
+    cumSec += seg.duration;
+    return start;
+  });
+
   list.innerHTML = segments.map((seg, i) => `
     <div class="segment-item z${seg.zone} ${state.activeSegmentIndex === i ? 'active' : ''}"
          onclick="selectSegment(${i})"
@@ -1075,7 +1124,8 @@ function renderSegmentsList(segments) {
         <div class="segment-track-artist">${escapeHtml(seg.trackArtist)}</div>
         <div class="segment-meta-row">
           <span class="meta-chip chip-bpm">♩ ${seg.actualBpm} BPM</span>
-          <span class="meta-chip chip-duration">⏱ ${formatDuration(seg.duration)}</span>
+          <span class="meta-chip chip-duration" title="Song duration">⏱ ${formatDuration(seg.duration)}</span>
+          <span class="meta-chip chip-cumtime" title="Cumulative time">🕐 ${formatDuration(cumTimes[i])}</span>
           <span class="meta-chip chip-intensity" style="color:${zoneToColor(seg.zone)}">${escapeHtml(seg.descriptor)}</span>
         </div>
       </div>
