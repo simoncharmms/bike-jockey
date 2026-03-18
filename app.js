@@ -24,6 +24,8 @@ const SCOPES = [
 const CACHE_KEY_TRACKS = 'bj_saved_tracks';
 const CACHE_KEY_DEVICES = 'bj_devices';
 const CACHE_KEY_FEATURES = 'bj_audio_features';
+const CACHE_KEY_FEATURES_VERSION = 'bj_features_version';
+const FEATURES_CACHE_VERSION = '2';
 const CACHE_KEY_TOKEN = 'bj_access_token';
 const CACHE_KEY_EXPIRY = 'bj_token_expiry';
 const CACHE_KEY_USER = 'bj_user_profile';
@@ -178,7 +180,7 @@ function getProfileGradient(profile, km) {
 }
 
 // ---- Segment generation ----
-function generateSegments(stage, tracks, audioFeatures) {
+function generateSegments(stage, tracks, audioFeatures, globalUsedIds = []) {
   const numSegments = stage.type === 'tt' || stage.type === 'mountain_tt' ? 6 : 12;
   const totalTime = (stage.distance / stage.avgSpeed) * 60; // minutes
   const segmentDuration = totalTime / numSegments;
@@ -204,8 +206,10 @@ function generateSegments(stage, tracks, audioFeatures) {
     const targetBpm = gradientToBpmTarget(gradientPct);
     const zone = bpmToZone(targetBpm);
 
-    // Pick best matching track
-    const track = findBestTrack(targetBpm, tracks, audioFeatures, segments.map(s => s.trackId));
+    // Pick best matching track (exclude global already-used IDs + within-playlist)
+    const withinPlaylistUsed = segments.map(s => s.trackId).filter(Boolean);
+    const allUsed = [...new Set([...globalUsedIds, ...withinPlaylistUsed])];
+    const track = findBestTrack(targetBpm, tracks, audioFeatures, allUsed);
 
     const rpe = rpeForZone(zone);
     const descriptor = intensityDescriptor(zone, Math.abs(gradientPct));
@@ -233,27 +237,44 @@ function generateSegments(stage, tracks, audioFeatures) {
     });
   }
 
-  return applyPlaylistRules(segments, stage.id, tracks, audioFeatures);
+  return applyPlaylistRules(segments, stage.id, tracks, audioFeatures, globalUsedIds);
 }
 
 // ---- Playlist Rules Engine ----
 function isInstrumental(feat) {
-  return feat && feat.energy < 0.4 && feat.danceability < 0.5;
+  if (!feat) return false;
+  // Primary: Spotify's own instrumentalness score
+  if (feat.instrumentalness >= 0.5) return true;
+  // Fallback heuristic for tracks missing the field (shouldn't happen, but defensive)
+  return feat.energy < 0.35 && feat.danceability < 0.4 && feat.loudness < -10;
 }
 
 function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
-  // Prefer tracks matching the instrumental criteria
+  // Prefer tracks matching the instrumental criteria (not in excludeIds)
   const candidates = tracks.filter(t =>
     audioFeatures[t.id] && isInstrumental(audioFeatures[t.id]) && !excludeIds.includes(t.id)
   );
   if (candidates.length > 0) {
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
-  // Fallback: pick the lowest-energy track not yet used
-  const sorted = tracks
-    .filter(t => audioFeatures[t.id] && !excludeIds.includes(t.id))
-    .sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-  return sorted[0] || tracks[0] || null;
+  // Fallback: lowest-energy tracks with instrumentalness >= 0.5 if available,
+  // otherwise sort by energy alone — but only from non-excluded pool
+  const available = tracks.filter(t => audioFeatures[t.id] && !excludeIds.includes(t.id));
+  if (available.length === 0) {
+    // Global pool exhausted — graceful fallback: allow any track
+    const globalFallback = tracks.filter(t => audioFeatures[t.id]);
+    if (globalFallback.length === 0) return tracks[0] || null;
+    globalFallback.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+    return globalFallback[0];
+  }
+  // Among available, prefer those with instrumentalness >= 0.5 but below threshold
+  const partialInstrumental = available.filter(t => (audioFeatures[t.id].instrumentalness || 0) >= 0.5);
+  if (partialInstrumental.length > 0) {
+    partialInstrumental.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+    return partialInstrumental[0];
+  }
+  available.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+  return available[0] || null;
 }
 
 function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) {
@@ -279,17 +300,22 @@ function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) 
   };
 }
 
-function findDieAerzteTrack(tracks) {
-  return tracks.find(t => {
+function findDieAerzteTrack(tracks, excludeIds = []) {
+  const all = tracks.filter(t => {
     const a = t.artist.toLowerCase();
     return a.includes('die ärzte') || a.includes('die aerzte') || a.includes('ärzte');
-  }) || null;
+  });
+  if (all.length === 0) return null;
+  // Prefer one not already used globally; fall back to any Die Ärzte track if all used
+  const fresh = all.filter(t => !excludeIds.includes(t.id));
+  return fresh.length > 0 ? fresh[Math.floor(Math.random() * fresh.length)] : all[Math.floor(Math.random() * all.length)];
 }
 
-function applyPlaylistRules(segments, stageId, tracks, audioFeatures) {
+function applyPlaylistRules(segments, stageId, tracks, audioFeatures, globalUsedIds = []) {
   if (!segments || segments.length === 0) return segments;
 
-  const usedIds = segments.map(s => s.trackId).filter(Boolean);
+  // Start with global exclusions + within-playlist tracks
+  const usedIds = [...new Set([...globalUsedIds, ...segments.map(s => s.trackId).filter(Boolean)])];
   const avgDuration = segments.reduce((sum, s) => sum + s.duration, 0) / segments.length;
 
   // --- Rule 1: Instrumental opener & closer ---
@@ -356,7 +382,8 @@ function applyPlaylistRules(segments, stageId, tracks, audioFeatures) {
   }
 
   // --- Rule 3: Second-to-last = Die Ärzte ---
-  const aerzteTrack = findDieAerzteTrack(tracks);
+  const aerzteTrack = findDieAerzteTrack(tracks, usedIds);
+  if (aerzteTrack) usedIds.push(aerzteTrack.id);
   let aerzteSeg;
   if (aerzteTrack) {
     const feat = audioFeatures[aerzteTrack.id];
@@ -424,12 +451,15 @@ function interpolateElevation(profile, km) {
 function findBestTrack(targetBpm, tracks, audioFeatures, usedIds) {
   if (!tracks || tracks.length === 0) return null;
 
-  // Try BPM matching first (prefer fresh tracks, allow some reuse)
   const tracksWithFeatures = tracks.filter(t => audioFeatures[t.id]);
   if (tracksWithFeatures.length === 0) return tracks[Math.floor(Math.random() * tracks.length)];
 
-  // Score each track: BPM proximity + avoid recently used
-  const scored = tracksWithFeatures.map(t => {
+  // Split into fresh (not globally used) and already-used pools
+  const freshPool = tracksWithFeatures.filter(t => !usedIds.includes(t.id));
+  const pool = freshPool.length > 0 ? freshPool : tracksWithFeatures; // graceful fallback
+
+  // Score each track: BPM proximity
+  const scored = pool.map(t => {
     const feat = audioFeatures[t.id];
     const bpm = feat.tempo;
     // Consider both original tempo and half/double time
@@ -439,8 +469,7 @@ function findBestTrack(targetBpm, tracks, audioFeatures, usedIds) {
       Math.abs(bpm / 2 - targetBpm)
     ];
     const minDiff = Math.min(...bpmDiffs);
-    const penalty = usedIds.slice(-4).includes(t.id) ? 40 : 0;
-    return { track: t, score: minDiff + penalty };
+    return { track: t, score: minDiff };
   });
 
   scored.sort((a, b) => a.score - b.score);
@@ -644,6 +673,13 @@ async function fetchSavedTracks() {
 }
 
 async function fetchAudioFeatures(trackIds) {
+  // Cache version check — if stale, clear features cache (but not track cache)
+  const cachedVersion = localStorage.getItem(CACHE_KEY_FEATURES_VERSION);
+  if (cachedVersion !== FEATURES_CACHE_VERSION) {
+    localStorage.removeItem(CACHE_KEY_FEATURES);
+    localStorage.setItem(CACHE_KEY_FEATURES_VERSION, FEATURES_CACHE_VERSION);
+  }
+
   // Check existing cache
   const cached = localStorage.getItem(CACHE_KEY_FEATURES);
   const existing = cached ? JSON.parse(cached) : {};
@@ -672,7 +708,8 @@ async function fetchAudioFeatures(trackIds) {
             energy: feat.energy,
             valence: feat.valence,
             danceability: feat.danceability,
-            loudness: feat.loudness
+            loudness: feat.loudness,
+            instrumentalness: feat.instrumentalness
           };
         }
       }
@@ -715,6 +752,15 @@ async function createSpotifyPlaylist(stageName, trackUris) {
 
 // ---- Elevation Chart ----
 let elevationChart = null;
+// Active segment km midpoint for the vertical marker
+let elevationChartActiveKm = null;
+// Profile km max for x-axis mapping
+let elevationChartMaxKm = 0;
+
+function updateElevationMarker(kmMid) {
+  elevationChartActiveKm = kmMid;
+  if (elevationChart) elevationChart.update('none');
+}
 
 function renderElevationChart(stage, segments) {
   const canvas = document.getElementById('elevation-chart');
@@ -726,19 +772,49 @@ function renderElevationChart(stage, segments) {
     elevationChart = null;
   }
 
+  elevationChartActiveKm = null;
+  elevationChartMaxKm = stage.profile[stage.profile.length - 1][0];
+
   const labels = stage.profile.map(p => `${p[0]}km`);
   const elevData = stage.profile.map(p => p[1]);
 
-  // Build gradient colors for the fill based on zones
-  const minElev = Math.min(...elevData);
-  const maxElev = Math.max(...elevData);
+  // afterDraw plugin: vertical segment marker
+  const segmentMarkerPlugin = {
+    id: 'segmentMarker',
+    afterDraw(chart) {
+      if (elevationChartActiveKm == null) return;
+      const { ctx: c, chartArea, scales } = chart;
+      if (!chartArea) return;
 
-  // Calculate segment boundaries for background annotation
-  const segmentColors = segments.map(seg => ({
-    xStart: seg.km,
-    xEnd: seg.kmEnd,
-    color: zoneToColor(seg.zone)
-  }));
+      // Map km to pixel x: x-axis is label-based (index), so compute fractional index
+      const profileKms = stage.profile.map(p => p[0]);
+      const maxKm = profileKms[profileKms.length - 1];
+      const minKm = profileKms[0];
+      const fraction = (elevationChartActiveKm - minKm) / (maxKm - minKm);
+      const xPx = chartArea.left + fraction * (chartArea.right - chartArea.left);
+
+      c.save();
+      c.beginPath();
+      c.moveTo(xPx, chartArea.top);
+      c.lineTo(xPx, chartArea.bottom);
+      c.strokeStyle = '#ff6b2b';
+      c.lineWidth = 2;
+      c.setLineDash([4, 3]);
+      c.stroke();
+      c.setLineDash([]);
+
+      // Label
+      const seg = segments && segments[state.activeSegmentIndex];
+      const label = seg ? `S${seg.index + 1}` : '';
+      if (label) {
+        c.font = '700 11px Inter, sans-serif';
+        c.fillStyle = '#ff6b2b';
+        c.textAlign = 'center';
+        c.fillText(label, xPx, chartArea.top - 4);
+      }
+      c.restore();
+    }
+  };
 
   elevationChart = new Chart(ctx, {
     type: 'line',
@@ -810,7 +886,8 @@ function renderElevationChart(stage, segments) {
           border: { display: false }
         }
       }
-    }
+    },
+    plugins: [segmentMarkerPlugin]
   });
 }
 
@@ -1107,6 +1184,13 @@ function selectSegment(index) {
 
   // Update now playing
   renderNowPlaying(segments[index]);
+
+  // Update elevation chart marker — use km midpoint of the segment
+  const seg = segments[index];
+  if (seg && seg.km != null && seg.kmEnd != null) {
+    const kmMid = (seg.km + seg.kmEnd) / 2;
+    updateElevationMarker(kmMid);
+  }
 }
 
 async function selectStage(stageId) {
@@ -1135,7 +1219,12 @@ async function selectStage(stageId) {
   // Generate or load cached playlist
   let segments = state.generatedPlaylists[stageId];
   if (!segments && state.savedTracks.length > 0) {
-    segments = generateSegments(stage, state.savedTracks, state.audioFeatures);
+    // Collect all track IDs already used across every other generated playlist
+    const globalUsedIds = Object.values(state.generatedPlaylists)
+      .flat()
+      .map(s => s.trackId)
+      .filter(Boolean);
+    segments = generateSegments(stage, state.savedTracks, state.audioFeatures, globalUsedIds);
     state.generatedPlaylists[stageId] = segments;
   }
 
@@ -1147,6 +1236,12 @@ async function selectStage(stageId) {
 
   // Render now playing
   renderNowPlaying(segments?.[0] || null);
+
+  // Initialize elevation marker to first segment
+  if (segments && segments[0] && segments[0].km != null) {
+    const kmMid = (segments[0].km + segments[0].kmEnd) / 2;
+    updateElevationMarker(kmMid);
+  }
 
   // Render sidebar metrics
   if (segments) {

@@ -146,25 +146,31 @@
       <!-- Main Content -->
       <div class="stage-main-content">
 
-        <!-- Elevation Profile Chart -->
-        <div class="chart-container">
-          <div class="chart-title">
-            📈 Elevation Profile
-            <span style="font-size:11px;color:var(--text-muted);margin-left:auto">hover to inspect</span>
-          </div>
-          <div class="chart-wrapper">
-            <canvas id="elevation-chart"></canvas>
-          </div>
-        </div>
+        <!-- Sticky top: Elevation Profile + Now Playing -->
+        <div class="stage-sticky-top">
 
-        <!-- Now Playing / Current Segment -->
-        <div>
-          <div class="chart-title" style="margin-bottom:12px">🎵 Current Segment</div>
-          <div id="now-playing"></div>
-        </div>
+          <!-- Elevation Profile Chart -->
+          <div class="chart-container">
+            <div class="chart-title">
+              📈 Elevation Profile
+              <span style="font-size:11px;color:var(--text-muted);margin-left:auto">hover to inspect</span>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="elevation-chart"></canvas>
+            </div>
+          </div>
 
-        <!-- Playlist / Segments -->
-        <div>
+          <!-- Now Playing / Current Segment -->
+          <div>
+            <div class="chart-title" style="margin-bottom:12px">🎵 Current Segment</div>
+            <div id="now-playing"></div>
+          </div>
+
+        </div><!-- /stage-sticky-top -->
+
+        <!-- Scrollable: Playlist / Segments -->
+        <div class="stage-scrollable">
+
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <div class="chart-title" style="margin-bottom:0">📋 Stage Playlist</div>
             <button class="btn btn-primary btn-sm" id="btn-play-stage" onclick="handlePlayStage()">▶ Play on Spotify</button>
@@ -183,7 +189,8 @@
           <div class="segments-list" id="segments-list">
             <!-- Segments rendered by JS -->
           </div>
-        </div>
+
+        </div><!-- /stage-scrollable -->
 
       </div>
 
