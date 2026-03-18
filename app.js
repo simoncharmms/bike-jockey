@@ -257,24 +257,23 @@ function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
   if (candidates.length > 0) {
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
-  // Fallback: lowest-energy tracks with instrumentalness >= 0.5 if available,
-  // otherwise sort by energy alone — but only from non-excluded pool
+
+  // No true instrumentals available — fall back gracefully
   const available = tracks.filter(t => audioFeatures[t.id] && !excludeIds.includes(t.id));
-  if (available.length === 0) {
-    // Global pool exhausted — graceful fallback: allow any track
-    const globalFallback = tracks.filter(t => audioFeatures[t.id]);
-    if (globalFallback.length === 0) return tracks[0] || null;
-    globalFallback.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-    return globalFallback[0];
+  const pool = available.length > 0 ? available : tracks.filter(t => audioFeatures[t.id]);
+  if (pool.length === 0) return tracks[0] || null;
+
+  // Among the pool, prefer partial instrumentals (instrumentalness >= 0.3) — pick randomly
+  const partial = pool.filter(t => (audioFeatures[t.id].instrumentalness || 0) >= 0.3);
+  if (partial.length > 0) {
+    return partial[Math.floor(Math.random() * partial.length)];
   }
-  // Among available, prefer those with instrumentalness >= 0.5 but below threshold
-  const partialInstrumental = available.filter(t => (audioFeatures[t.id].instrumentalness || 0) >= 0.5);
-  if (partialInstrumental.length > 0) {
-    partialInstrumental.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-    return partialInstrumental[0];
-  }
-  available.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-  return available[0] || null;
+
+  // Last resort: pick randomly from the bottom tercile by energy (avoid always picking same track)
+  pool.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+  const tercileSize = Math.max(1, Math.ceil(pool.length / 3));
+  const lowEnergyPool = pool.slice(0, tercileSize);
+  return lowEnergyPool[Math.floor(Math.random() * lowEnergyPool.length)];
 }
 
 function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) {
