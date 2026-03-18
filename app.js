@@ -342,11 +342,10 @@ function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
   const t7 = tracks.filter(t => speech(t) <= 0.2);
   if (t7.length > 0) return rand(t7);
 
-  // Nuclear fallback: absolutely anything not used — no empty slots ever
+  // Nuclear fallback
   const t8 = tracks.filter(t => fresh(t));
   if (t8.length > 0) return rand(t8);
-
-  // Last resort: any track at all
+  console.warn('[BJ] findInstrumentalTrack: nuclear last resort — returning any track');
   return rand(tracks);
 }
 
@@ -410,7 +409,7 @@ function applyPlaylistRules(segments, stageId, tracks, audioFeatures, globalUsed
   // --- Rule 2: Insert breaks ---
   let breakCount;
   if (stageId <= 3) breakCount = 3;
-  else if (stageId <= 6) breakCount = 4;
+  else if (stageId <= 6) breakCount = 2;
   else breakCount = 1;
 
   // Find zone-change points (where zone increases by ≥1 vs previous)
@@ -1750,7 +1749,9 @@ function generateDemoTracks() {
     ['Uprising', 'Muse'], ['Knights of Cydonia', 'Muse'],
     ['Supermassive Black Hole', 'Muse'], ['Hysteria', 'Muse'],
     ['Radioactive', 'Imagine Dragons'], ['Believer', 'Imagine Dragons'],
-    ['Till I Collapse', 'Eminem'], ['Not Afraid', 'Eminem']
+    ['Till I Collapse', 'Eminem'], ['Not Afraid', 'Eminem'],
+    ['Willow (Instrumental)', 'Vitamin String Quartet'],
+    ['Blinding Lights (Instrumental)', 'Instrumental Covers']
   ];
 
   const bpmMap = {
@@ -1763,7 +1764,25 @@ function generateDemoTracks() {
     'Get Lucky': 116, 'Around the World': 121, 'Run Boy Run': 105,
     'Iron': 68, 'Uprising': 128, 'Knights of Cydonia': 136,
     'Supermassive Black Hole': 130, 'Hysteria': 132, 'Radioactive': 93,
-    'Believer': 125, 'Till I Collapse': 171, 'Not Afraid': 170
+    'Believer': 125, 'Till I Collapse': 171, 'Not Afraid': 170,
+    'Willow (Instrumental)': 96, 'Blinding Lights (Instrumental)': 171
+  };
+
+  // Per-track acoustic feature overrides for realism
+  const featureOverrides = {
+    'Thunderstruck':              { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Lose Yourself':              { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Not Afraid':                 { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Till I Collapse':            { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Uprising':                   { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Knights of Cydonia':         { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Hysteria':                   { speechiness: 0.08, instrumentalness: 0.0,  acousticness: 0.05 },
+    'Take Me to Church':          { speechiness: 0.04, instrumentalness: 0.01, acousticness: 0.25 },
+    'Iron':                       { speechiness: 0.04, instrumentalness: 0.01, acousticness: 0.25 },
+    'Bohemian Rhapsody':          { speechiness: 0.04, instrumentalness: 0.01, acousticness: 0.25 },
+    'Run Boy Run':                { speechiness: 0.04, instrumentalness: 0.01, acousticness: 0.25 },
+    'Willow (Instrumental)':      { speechiness: 0.02, instrumentalness: 0.85, acousticness: 0.6  },
+    'Blinding Lights (Instrumental)': { speechiness: 0.02, instrumentalness: 0.85, acousticness: 0.1 }
   };
 
   const tracks = demoNames.map(([name, artist], i) => ({
@@ -1779,12 +1798,17 @@ function generateDemoTracks() {
   const features = {};
   tracks.forEach(t => {
     const bpm = bpmMap[t.name] || (80 + Math.random() * 100);
+    const overrides = featureOverrides[t.name] || {};
+    const isInstrumentalTrack = (overrides.instrumentalness || 0) >= 0.5;
     features[t.id] = {
       tempo: bpm,
-      energy: 0.4 + Math.random() * 0.6,
+      energy: isInstrumentalTrack ? 0.3 : (0.4 + Math.random() * 0.6),
       valence: 0.3 + Math.random() * 0.7,
       danceability: 0.4 + Math.random() * 0.6,
-      loudness: -8 + Math.random() * 6
+      loudness: -8 + Math.random() * 6,
+      speechiness: overrides.speechiness ?? 0.06,
+      instrumentalness: overrides.instrumentalness ?? 0.0,
+      acousticness: overrides.acousticness ?? 0.1
     };
   });
 
