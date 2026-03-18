@@ -25,7 +25,7 @@ const CACHE_KEY_TRACKS = 'bj_saved_tracks';
 const CACHE_KEY_DEVICES = 'bj_devices';
 const CACHE_KEY_FEATURES = 'bj_audio_features';
 const CACHE_KEY_FEATURES_VERSION = 'bj_features_version';
-const FEATURES_CACHE_VERSION = '2';
+const FEATURES_CACHE_VERSION = '3';
 const CACHE_KEY_TOKEN = 'bj_access_token';
 const CACHE_KEY_EXPIRY = 'bj_token_expiry';
 const CACHE_KEY_USER = 'bj_user_profile';
@@ -243,10 +243,15 @@ function generateSegments(stage, tracks, audioFeatures, globalUsedIds = []) {
 // ---- Playlist Rules Engine ----
 function isInstrumental(feat) {
   if (!feat) return false;
+  // Hard disqualifier: high speechiness = rap/spoken word/vocals → never a recovery track
+  // Kontra K "Energie" scores ~0.35+ here; pure instrumentals score < 0.1
+  if ((feat.speechiness || 0) > 0.15) return false;
   // Primary: Spotify's own instrumentalness score
   if (feat.instrumentalness >= 0.5) return true;
-  // Fallback heuristic for tracks missing the field (shouldn't happen, but defensive)
-  return feat.energy < 0.35 && feat.danceability < 0.4 && feat.loudness < -10;
+  // Secondary: acoustic + low energy + not speech-heavy (classical, ambient, acoustic covers)
+  if ((feat.acousticness || 0) >= 0.6 && feat.energy < 0.5) return true;
+  // Tertiary heuristic: clearly quiet/calm (string quartet covers etc.)
+  return feat.energy < 0.3 && feat.danceability < 0.35 && feat.loudness < -10;
 }
 
 function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
@@ -269,10 +274,12 @@ function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
     return partial[Math.floor(Math.random() * partial.length)];
   }
 
-  // Last resort: pick randomly from the bottom tercile by energy (avoid always picking same track)
-  pool.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
-  const tercileSize = Math.max(1, Math.ceil(pool.length / 3));
-  const lowEnergyPool = pool.slice(0, tercileSize);
+  // Last resort: exclude high-speechiness tracks (rap, spoken word), then pick from lowest-energy tercile
+  const nonSpeech = pool.filter(t => (audioFeatures[t.id].speechiness || 0) <= 0.15);
+  const lastPool = nonSpeech.length > 0 ? nonSpeech : pool;
+  lastPool.sort((a, b) => (audioFeatures[a.id]?.energy || 1) - (audioFeatures[b.id]?.energy || 1));
+  const tercileSize = Math.max(1, Math.ceil(lastPool.length / 3));
+  const lowEnergyPool = lastPool.slice(0, tercileSize);
   return lowEnergyPool[Math.floor(Math.random() * lowEnergyPool.length)];
 }
 
@@ -708,7 +715,9 @@ async function fetchAudioFeatures(trackIds) {
             valence: feat.valence,
             danceability: feat.danceability,
             loudness: feat.loudness,
-            instrumentalness: feat.instrumentalness
+            instrumentalness: feat.instrumentalness,
+            speechiness: feat.speechiness,
+            acousticness: feat.acousticness
           };
         }
       }
