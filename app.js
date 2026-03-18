@@ -243,16 +243,22 @@ function generateSegments(stage, tracks, audioFeatures, globalUsedIds = []) {
 // ---- Playlist Rules Engine ----
 function isInstrumental(feat) {
   if (!feat) return false;
-  // Hard disqualifier 1: rap/spoken word — speechiness > 0.15 means significant vocals/speech
-  if ((feat.speechiness || 0) > 0.15) return false;
-  // Hard disqualifier 2: high danceability + high energy = dance/pop vocal track
-  if (feat.danceability > 0.7 && feat.energy > 0.6) return false;
-  // Primary: Spotify's own instrumentalness score (>= 0.5 = likely instrumental)
-  if ((feat.instrumentalness || 0) >= 0.5) return true;
-  // Secondary: acoustic + calm (classical, ambient, acoustic covers)
-  if ((feat.acousticness || 0) >= 0.6 && feat.energy < 0.5) return true;
-  // Tertiary: very quiet + low danceability (film scores, lo-fi, ambient)
-  return feat.energy < 0.3 && feat.danceability < 0.35 && (feat.loudness || 0) < -10;
+  const speech = feat.speechiness ?? 0.5;    // unknown → assume vocal
+  const instness = feat.instrumentalness ?? 0;
+  const acoustic = feat.acousticness ?? 0;
+  const energy = feat.energy ?? 0.5;
+  const dance = feat.danceability ?? 0.5;
+  const loud = feat.loudness ?? -5;
+  // Hard disqualifier: significant speech/vocals
+  if (speech > 0.15) return false;
+  // Hard disqualifier: high-energy dance track
+  if (dance > 0.7 && energy > 0.6) return false;
+  // Primary: Spotify instrumentalness
+  if (instness >= 0.5) return true;
+  // Secondary: acoustic + calm
+  if (acoustic >= 0.6 && energy < 0.5) return true;
+  // Tertiary: very quiet and low danceability
+  return energy < 0.3 && dance < 0.35 && loud < -10;
 }
 
 // Look for an instrumental version of a specific song by name.
@@ -287,53 +293,61 @@ function findInstrumentalCoverOf(targetTrackName, tracks, audioFeatures, exclude
 }
 
 function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
-  const withFeatures = tracks.filter(t => audioFeatures[t.id]);
+  if (!tracks || tracks.length === 0) return null;
 
-  // Tier 1: true instrumentals not yet used
-  const tier1 = withFeatures.filter(t =>
-    isInstrumental(audioFeatures[t.id]) && !excludeIds.includes(t.id)
-  );
-  if (tier1.length > 0) return tier1[Math.floor(Math.random() * tier1.length)];
+  const feat = t => audioFeatures[t.id] || {};
+  const energy = t => feat(t).energy ?? 0.5;
+  const speech = t => feat(t).speechiness ?? 0.5;
+  const instness = t => feat(t).instrumentalness ?? 0;
+  const acoustic = t => feat(t).acousticness ?? 0;
+  const fresh = t => !excludeIds.includes(t.id);
 
-  // Tier 2: true instrumentals already used elsewhere (allow reuse rather than using a vocal track)
-  const tier2 = withFeatures.filter(t => isInstrumental(audioFeatures[t.id]));
-  if (tier2.length > 0) return tier2[Math.floor(Math.random() * tier2.length)];
+  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+  const randHalf = arr => {
+    const sorted = [...arr].sort((a, b) => energy(a) - energy(b));
+    return rand(sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2))));
+  };
 
-  // Tier 3: no true instrumentals in library at all — best approximation: low speechiness, low energy, not used
-  const tier3 = withFeatures.filter(t =>
-    (audioFeatures[t.id].speechiness || 0) <= 0.1 &&
-    audioFeatures[t.id].energy < 0.5 &&
-    !excludeIds.includes(t.id)
-  );
-  if (tier3.length > 0) {
-    // Pick randomly from the bottom-energy half to avoid always picking the same track
-    tier3.sort((a, b) => (audioFeatures[a.id].energy || 1) - (audioFeatures[b.id].energy || 1));
-    const half = Math.max(1, Math.ceil(tier3.length / 2));
-    return tier3[Math.floor(Math.random() * half)];
-  }
+  // Tier 1: true instrumental, not used
+  const t1 = tracks.filter(t => fresh(t) && isInstrumental(feat(t)));
+  if (t1.length > 0) return rand(t1);
 
-  // Tier 4: low speechiness, low energy, reuse allowed
-  const tier4 = withFeatures.filter(t =>
-    (audioFeatures[t.id].speechiness || 0) <= 0.1 &&
-    audioFeatures[t.id].energy < 0.5
-  );
-  if (tier4.length > 0) {
-    tier4.sort((a, b) => (audioFeatures[a.id].energy || 1) - (audioFeatures[b.id].energy || 1));
-    const half = Math.max(1, Math.ceil(tier4.length / 2));
-    return tier4[Math.floor(Math.random() * half)];
-  }
+  // Tier 2: true instrumental, reuse allowed — always better than a vocal track
+  const t2 = tracks.filter(t => isInstrumental(feat(t)));
+  if (t2.length > 0) return rand(t2);
 
-  // Absolute last resort: anything not used, excluding obvious rap/high-energy
-  const tier5 = withFeatures.filter(t =>
-    (audioFeatures[t.id].speechiness || 0) <= 0.2 && !excludeIds.includes(t.id)
-  );
-  if (tier5.length > 0) return tier5[Math.floor(Math.random() * tier5.length)];
+  // Tier 3: name/artist signals instrumental (VSQ, covers, etc.), not used
+  const t3 = tracks.filter(t => fresh(t) && (
+    t.name.toLowerCase().includes('instrumental') ||
+    t.artist.toLowerCase().includes('instrumental') ||
+    t.artist.toLowerCase().includes('string quartet') ||
+    t.artist.toLowerCase().includes('vitamin string') ||
+    t.artist.toLowerCase().includes('cover')
+  ));
+  if (t3.length > 0) return rand(t3);
 
-  // Pool is fully exhausted — pick anything not used
-  const notUsed = withFeatures.filter(t => !excludeIds.includes(t.id));
-  return notUsed.length > 0
-    ? notUsed[Math.floor(Math.random() * notUsed.length)]
-    : withFeatures[Math.floor(Math.random() * withFeatures.length)] || null;
+  // Tier 4: low speechiness + low energy, not used
+  const t4 = tracks.filter(t => fresh(t) && speech(t) <= 0.15 && energy(t) < 0.5);
+  if (t4.length > 0) return randHalf(t4);
+
+  // Tier 5: low speechiness + low energy, reuse allowed
+  const t5 = tracks.filter(t => speech(t) <= 0.15 && energy(t) < 0.5);
+  if (t5.length > 0) return randHalf(t5);
+
+  // Tier 6: just low speechiness, not used
+  const t6 = tracks.filter(t => fresh(t) && speech(t) <= 0.2);
+  if (t6.length > 0) return rand(t6);
+
+  // Tier 7: just low speechiness, reuse allowed
+  const t7 = tracks.filter(t => speech(t) <= 0.2);
+  if (t7.length > 0) return rand(t7);
+
+  // Nuclear fallback: absolutely anything not used — no empty slots ever
+  const t8 = tracks.filter(t => fresh(t));
+  if (t8.length > 0) return rand(t8);
+
+  // Last resort: any track at all
+  return rand(tracks);
 }
 
 function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) {
