@@ -255,6 +255,37 @@ function isInstrumental(feat) {
   return feat.energy < 0.3 && feat.danceability < 0.35 && (feat.loudness || 0) < -10;
 }
 
+// Look for an instrumental version of a specific song by name.
+// Matches tracks whose name contains both "instrumental" and the target song title (case-insensitive).
+// Falls back to null if nothing found — caller chains to findInstrumentalTrack().
+function findInstrumentalCoverOf(targetTrackName, tracks, audioFeatures, excludeIds) {
+  if (!targetTrackName) return null;
+  const needle = targetTrackName.toLowerCase();
+  const candidates = tracks.filter(t => {
+    if (excludeIds.includes(t.id)) return false;
+    const name = t.name.toLowerCase();
+    return name.includes('instrumental') && name.includes(needle);
+  });
+  if (candidates.length > 0) return candidates[Math.floor(Math.random() * candidates.length)];
+
+  // Broader fallback: artist name contains "instrumental" or "string quartet" or "cover"
+  // and the track name contains the target — catches VSQ-style covers
+  const broadCandidates = tracks.filter(t => {
+    if (excludeIds.includes(t.id)) return false;
+    const name = t.name.toLowerCase();
+    const artist = t.artist.toLowerCase();
+    const nameMatch = name.includes(needle);
+    const instrumentalArtist = artist.includes('instrumental') ||
+      artist.includes('string quartet') ||
+      artist.includes('vitamin string') ||
+      artist.includes('cover');
+    return nameMatch && instrumentalArtist;
+  });
+  if (broadCandidates.length > 0) return broadCandidates[Math.floor(Math.random() * broadCandidates.length)];
+
+  return null;
+}
+
 function findInstrumentalTrack(tracks, audioFeatures, excludeIds) {
   const withFeatures = tracks.filter(t => audioFeatures[t.id]);
 
@@ -314,7 +345,7 @@ function makeInstrumentalSegment(track, audioFeatures, durationSec, descriptor) 
     zone: 1,
     duration: durationSec,
     trackId: track ? track.id : null,
-    trackName: track ? track.name : 'Instrumental',
+    trackName: track ? track.name : '[ No instrumental found — add one to your library ]',
     trackArtist: track ? track.artist : '—',
     trackAlbumArt: track ? track.albumArt : null,
     trackUri: track ? track.uri : null,
@@ -347,9 +378,16 @@ function applyPlaylistRules(segments, stageId, tracks, audioFeatures, globalUsed
   const avgDuration = segments.reduce((sum, s) => sum + s.duration, 0) / segments.length;
 
   // --- Rule 1: Instrumental opener & closer ---
-  const openerTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+  // Prefer an instrumental cover of the first / last real segment's song
+  const firstRealTrackName = segments[0]?.trackName;
+  const lastRealTrackName = segments[segments.length - 1]?.trackName;
+
+  const openerTrack = findInstrumentalCoverOf(firstRealTrackName, tracks, audioFeatures, usedIds)
+    || findInstrumentalTrack(tracks, audioFeatures, usedIds);
   if (openerTrack) usedIds.push(openerTrack.id);
-  const closerTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+
+  const closerTrack = findInstrumentalCoverOf(lastRealTrackName, tracks, audioFeatures, usedIds)
+    || findInstrumentalTrack(tracks, audioFeatures, usedIds);
   if (closerTrack) usedIds.push(closerTrack.id);
 
   const opener = makeInstrumentalSegment(openerTrack, audioFeatures, avgDuration, '🎸 Warm-Up (Instrumental)');
@@ -401,9 +439,15 @@ function applyPlaylistRules(segments, stageId, tracks, audioFeatures, globalUsed
   let breakIdx = 0;
   for (let i = 0; i < segments.length; i++) {
     if (breakIdx < breakPositions.length && i === breakPositions[breakIdx]) {
-      const breakTrack = findInstrumentalTrack(tracks, audioFeatures, usedIds);
+      // Preferred: instrumental cover of the song that follows this break
+      const nextSegTrackName = segments[i]?.trackName;
+      let breakTrack = findInstrumentalCoverOf(nextSegTrackName, tracks, audioFeatures, usedIds)
+        || findInstrumentalTrack(tracks, audioFeatures, usedIds);
       if (breakTrack) usedIds.push(breakTrack.id);
-      middle.push(makeInstrumentalSegment(breakTrack, audioFeatures, avgDuration * 0.6, '💤 Recovery Break'));
+      const desc = breakTrack && breakTrack.name.toLowerCase().includes('instrumental')
+        ? `💤 Recovery Break (Instrumental Cover)`
+        : '💤 Recovery Break';
+      middle.push(makeInstrumentalSegment(breakTrack, audioFeatures, avgDuration * 0.6, desc));
       breakIdx++;
     }
     middle.push(segments[i]);
