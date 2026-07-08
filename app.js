@@ -155,6 +155,23 @@ function intensityDescriptor(zone, gradient) {
 }
 
 // ---- Gradient & BPM mapping ----
+
+// Maps gradient (%) directly to exercise intensity zone (1=recovery … 5=max).
+// This is separate from bpmToZone, which maps music track BPM to zone and has
+// OPPOSITE directionality: gradientToBpmTarget returns low BPM for steep climbs
+// (slow, powerful music) so using bpmToZone on that value produces zone 1
+// (recovery) for brutal climbs — the exact inverse of what is correct.
+function gradientToZone(gradient) {
+  if (gradient > 10) return 5;  // brutal standing climb — VO2max/max
+  if (gradient > 8)  return 5;  // very steep (e.g. Alpe d'Huez 8.1%)
+  if (gradient > 6)  return 4;  // steep climb — threshold
+  if (gradient > 3)  return 3;  // moderate climb — tempo
+  if (gradient > 0)  return 2;  // rolling / light climb — endurance
+  if (gradient > -5) return 2;  // flat / slight descent — endurance
+  if (gradient > -8) return 1;  // active descent — recovery
+  return 1;                     // fast descent — recovery
+}
+
 function gradientToBpmTarget(gradient) {
   if (gradient > 10) return 72;     // brutal climb
   if (gradient > 8)  return 88;     // steep climb
@@ -204,7 +221,10 @@ function generateSegments(stage, tracks, audioFeatures, globalUsedIds = []) {
     const gradientPct = segDist > 0 ? (elevChange / (segDist * 10)) : 0; // in %
 
     const targetBpm = gradientToBpmTarget(gradientPct);
-    const zone = bpmToZone(targetBpm);
+    // Use gradientToZone (not bpmToZone) here: gradientToBpmTarget returns
+    // lower BPM for steeper climbs (slow powerful music), so bpmToZone would
+    // assign zone 1 (recovery) to brutal climbs — exactly backwards.
+    const zone = gradientToZone(gradientPct);
 
     // Pick best matching track (exclude global already-used IDs + within-playlist)
     const withinPlaylistUsed = segments.map(s => s.trackId).filter(Boolean);
