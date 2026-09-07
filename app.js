@@ -6,7 +6,10 @@
 'use strict';
 
 // ---- Config ----
-const CLIENT_ID = 'fafb4d31398b4d0b82e32572bbd7444a';
+// Spotify PKCE public client ID (safe to expose — PKCE flow uses no client secret).
+// Override: set ?client_id=<id> in the URL for a different Spotify app.
+const CLIENT_ID = new URLSearchParams(window.location.search).get('client_id')
+  || 'fafb4d31398b4d0b82e32572bbd7444a';
 const REDIRECT_URIS = [
   'http://localhost:3000/callback',
   'https://simoncharmms.github.io/bike-jockey/callback'
